@@ -23,6 +23,10 @@ class EventServiceProvider extends ServiceProvider
         
         \App\Events\Referred::class => [
             \App\Listeners\MailReferralLink::class
+        ],
+
+        \App\Events\PasswordReset::class => [
+            \App\Listeners\MailPasswordResetToken::class
         ]
     ];
 }

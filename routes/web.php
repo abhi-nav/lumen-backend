@@ -15,7 +15,8 @@ $middleware = [
 $api->version('v1', $middleware, function ($api) use($apiGroup) {
 
 	$api->group($apiGroup, function ($api) {
-	
+
+		// for local testing (temporary)
 		$api->get('/get-token-for-testing', function() {
 			return ['access_token' =>  \Auth::login(App\Models\User::find(1))];
 		});
@@ -23,6 +24,12 @@ $api->version('v1', $middleware, function ($api) use($apiGroup) {
 		$api->post('/register', 'User\UserController@register');
 
 		$api->post('/validate-user', 'User\UserController@validateUser');
+
+		$api->post('/forgot-password', 'User\UserController@sendResetCodeToEmail');
+
+		$api->post('/reset-password', 'User\UserController@changePassword');
+
+		$api->post('/referral', 'User\UserReferralController@assignNonLoggedInUserReferral');
 
 		// protected route for user
 		$api->group(['middleware' => 'jwt.api'], function ($api) {
@@ -35,11 +42,6 @@ $api->version('v1', $middleware, function ($api) use($apiGroup) {
 			$api->post('/user/referral', 'User\UserReferralController@assignUserReferral');
 			
 		});
-
-		// protected route for admin
-		// $api->group(['middleware' => 'jwt.api'], function ($api) {
-		// 	$api->get('/details', 'User\UserController@authRoute');
-		// });
     });
 });
 

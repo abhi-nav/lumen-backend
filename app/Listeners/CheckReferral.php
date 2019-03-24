@@ -30,12 +30,12 @@ class CheckReferral
     {
         $request = app('request');
 
-        if($request->referral_code) {
-            $referral = ReferralCode::where('code', $request->referral_code)
+        if($request->input('referral_code')) {
+            $referral = ReferralCode::where('code', $request->input('referral_code'))
                 ->first();
             if($referral) {
                 Referral::updateOrCreate(
-                    ['referred_by' => $referral->user->id, 'referred_to' => $event->user->id],
+                    ['referred_by' => $referral->user->id, 'referred_to' => $event->user->email],
                     ['is_registered' => 1]
                 );
             }

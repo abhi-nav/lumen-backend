@@ -13,6 +13,7 @@ use Validator;
 use Dingo\Api\Exception\StoreResourceFailedException as Error;
 use App\Events\Registered;
 use App\Events\LoginRequested;
+use App\Events\PasswordReset;
 use Carbon\Carbon;
 
 class UserController extends Controller
@@ -22,8 +23,11 @@ class UserController extends Controller
 
     public function register(Request $request) 
     {
+        $message = 'Registration Successful';
+        $isNew = true;
+        $token = null;
 
-        $validator = $this->validateEmailInput($request->all());
+        $validator = $this->validateLoginInput($request->all());
 
         if($validator->fails()) {
             throw new Error('Registration Failed', $validator->errors());
@@ -32,40 +36,46 @@ class UserController extends Controller
         $isNew = false;
 
         if(!$user = $this->getUserByEmail($request->email)) {
-            $user = User::create($request->only('email'));
-            $isNew = true;
+            $user = User::create([
+                'email' => $request->input('email'),
+                'password' => app('hash')->make($request->input('password'))
+            ]);
+            
             event(new Registered($user));
-        }
 
-        $verifyUser = VerifyUser::updateOrCreate(
-            ['user_id' => $user->id],
-            ['token' => random_int(100000, 999999)]
-        );
+        } else {
+            // dd(app('hash')->check($request->password, $user->password));
+            if(! app('hash')->check($request->input('password'), $user->password)) {
+                throw new Error('Sign in Failed', $validator->errors()->add('password', 'Your password is incorrect'));
+            }
+            
+            $isNew = false;
+            if($user->verified) {
+                $token = $this->getUserAccessToken($user);
+                $message = 'Login Successful';
+            }
+        }
+        if(!$user->verified) {
+            VerifyUser::updateOrCreate(
+                ['user_id' => $user->id],
+                ['token' => random_int(100000, 999999)]
+            );
+            event(new LoginRequested($user));
+        }
         
-        event(new LoginRequested($user));
+        return [
+            'user' => (new UserTransformer())->transform($user),
+            'isNew' => $isNew,
+            'verified' => $user->verified,
+            'message' => $message,
+            'access_token' => $token
+        ];
 
         $response['user'] = (new UserTransformer())->transform($user);
         $response['isNew'] = $isNew;
         $response['message'] = 'Registration Successful';
 
-        // event(new Registered($user));
-
-        // $customClaims = [
-        //     'ip'=>$request->ip(),
-        // ];
-        
-        // $response['token'] = JWTAuth::fromUser($user, $customClaims);
-
         return $response;
-
-        // return $this->response->item($user, new UserTransformer)->addMeta('token', $token);
-    	// return Auth::login(User::first());
-    	// return config('auth');
-    	// return User::all();
-    	// return $this->response->paginator(User::paginate(3), new UserTransformer);
-    	// return $this->response->errorBadRequest();
-    	// return $this->response->error('This is an error.', 404);
-    	// return $this->response->noContent();
     }
 
     public function validateUser(Request $request) {
@@ -93,16 +103,85 @@ class UserController extends Controller
             $user->update(['verified'=>true]);
         }
 
-        // issue token
-        $token = JWTAuth::fromUser($user, [
-            'ip'=>$request->ip()
-        ]);
-
         // verified response
         return [
-            'message' => 'verified', 
+            'message' => 'Your email has been successfully verified', 
             'user' => (new UserTransformer())->transform($user),
-            'access_token' => $token
+            'access_token' => $this->getUserAccessToken($user)
+        ];
+    }
+
+    public function getUserAccessToken(User $user)
+    {
+        return JWTAuth::fromUser($user, [
+            'ip'=>app('request')->ip()
+        ]);
+    }
+
+    public function sendResetCodeToEmail()
+    {
+        $request = app('request');
+
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email|exists:users'
+        ]);
+
+        if($validator->fails()) {
+            throw new Error('Error sending password reset code', $validator->errors());
+        }
+        $user = $this->getUserByEmail($request->input('email'));
+
+        VerifyUser::updateOrCreate(
+            ['user_id' => $user->id],
+            ['token' => random_int(100000, 999999)]
+        );
+
+        event(new PasswordReset($user));
+
+        return [
+            'status' => true,
+            'email' => $request->input('email'),
+            'message' => 'Password Reset code sent'
+        ];
+    }
+
+    public function changePassword()
+    {
+        $request = app('request');
+
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email|exists:users',
+            'password' => 'required|string|min:6',
+            'resetCode' => 'required|string|min:6'
+        ]);
+
+        if($validator->fails()) {
+            throw new Error('Error Resetting Password', $validator->errors());
+        }
+
+        $user = $this->getUserByEmail($request->input('email'));
+
+        // token valid
+        if($user->verifyUser->token !== $request->input('resetCode')) {
+            throw new Error('Error Resetting Password', $validator->errors()->add('resetCode', 'Reset Code did not match. Please check the code with your email'));
+
+            // return $this->response->error('Incorrect reset token', 401);
+        }
+
+        // token expiration check
+        if(Carbon::parse($user->verifyUser->updated_at)->addMinutes($this->tokenValidTime)->lt(Carbon::now())) {
+            return $this->response->error('Token has Expired', 401);
+        }
+
+        $user->update([
+            'password' => app('hash')->make($request->input('password')),
+            'verified' => true
+        ]);
+
+        return [
+            'status' => true,
+            'email' => $request->input('email'),
+            'message' => 'Password Reset Successfully'
         ];
     }
 
@@ -110,6 +189,16 @@ class UserController extends Controller
     {
         $rules = [
             'email' => 'required|email'
+        ];
+
+        return Validator::make($emailInput, $rules);
+    }
+
+    public function validateLoginInput($emailInput) 
+    {
+        $rules = [
+            'email' => 'required|email',
+            'password' => 'required|string|min:6|'
         ];
 
         return Validator::make($emailInput, $rules);

@@ -1,12 +1,5 @@
 <?php 
-
 return [
-    // fix receipient
-    'to' => [
-        'address' => 'anav.pdel@gmail.com',
-        'name' => 'Example'
-    ],
-
     /*
     |--------------------------------------------------------------------------
     | Mail Driver

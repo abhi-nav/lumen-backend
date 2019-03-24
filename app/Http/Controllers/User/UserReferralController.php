@@ -40,27 +40,67 @@ class UserReferralController extends Controller
         }
 
         // user already exist
-        if(User::where('email', $request->input('email'))->first()) {
-            return $this->response->error("{$request->input('email')} email is already a registered user", 400);
+        if(User::where('email', $request->input('referred_to'))->first()) {
+            return $this->response->error("{$request->input('referred_to')} email is already a registered user", 400);
         }
 
         // already exist(referred_to) error for this user
-        $referred_to = Referral::where('referred_to', $request->input('email'))
+        $referred_to = Referral::where('referred_to', $request->input('referred_to'))
             ->where('referred_by', $user->id)
             ->first();
 
         if($referred_to) {
-            return $this->response->error("You have already referred {$request->input('email')}", 400);
+            return $this->response->error("You have already referred {$request->input('referred_to')}", 400);
         }
 
         //save
-        $referral = $user->referrals()->create(['referred_to' => $request->input('email')]);
+        $referral = $user->referrals()->create(['referred_to' => $request->input('referred_to')]);
 
         // send referal email
-        event(new Referred($user, $request->input('email')));
+        event(new Referred($user, $request->input('referred_to')));
 
         return [
-            'message' => "{$request->input('email')} has been referred successfully",
+            'message' => "{$request->input('referred_to')} has been referred successfully",
+            'referral' => (new UserReferralTransformer)->transform($referral),
+            'email_sent' => true
+        ];
+    }
+
+    public function assignNonLoggedInUserReferral(Request $request)
+    {
+        // validation error
+        $validator = $this->validateNonLoggedInEmailInput($request->all());
+
+        if($validator->fails()) {
+            throw new Error('Referral Failed',  $validator->errors());
+        }
+
+        // user already exist
+        if(User::where('email', $request->input('referred_to'))->first()) {
+            return $this->response->error("{$request->input('referred_to')} email is already a registered user", 400);
+        }
+        
+        if(!$user = User::where('email', $request->input('referred_by'))->first()) {
+            $user = User::create(['email' => $request->input('referred_by')]);
+        }
+
+        // already exist(referred_to) error for this user
+        $referred_to = Referral::where('referred_to', $request->input('referred_to'))
+            ->where('referred_by', $user->id)
+            ->first();
+
+        if($referred_to) {
+            return $this->response->error("You have already referred {$request->input('referred_to')}", 400);
+        }
+
+        //save
+        $referral = $user->referrals()->create(['referred_to' => $request->input('referred_to')]);
+
+        // send referal email
+        event(new Referred($user, $request->input('referred_to')));
+
+        return [
+            'message' => "{$request->input('referred_to')} has been referred successfully",
             'referral' => (new UserReferralTransformer)->transform($referral),
             'email_sent' => true
         ];
@@ -69,7 +109,17 @@ class UserReferralController extends Controller
     public function validateEmailInput($emailInput) 
     {
         $rules = [
-            'email' => 'required|email'
+            'referred_to' => 'required|email'
+        ];
+
+        return Validator::make($emailInput, $rules);
+    }
+
+    public function validateNonLoggedInEmailInput($emailInput) 
+    {
+        $rules = [
+            'referred_by' => 'required|email',
+            'referred_to' => 'required|email'
         ];
 
         return Validator::make($emailInput, $rules);
